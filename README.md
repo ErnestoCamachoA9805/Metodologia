@@ -1,8 +1,18 @@
-# Anexo A — Proceso de extracción y análisis de IoAs
+# Propósito del Repositorio
 
-## Propósito
+Este repositorio documenta la metodología empleada para el diseño y generación de la estructura de logs propuesta en el artículo de investigación. Su propósito es proporcionar trazabilidad sobre las diferentes etapas del proceso, desde la identificación de comportamientos asociados a ciberataques hasta la construcción del log enriquecido utilizado como resultado de la investigación.
 
-El propósito de este documento es mostrar el proceso de extracción de los IoAs (Indicadores de Ataque), el análisis realizado, las tablas generadas y los prompts usados para el desarrollo de la investigación.
+En una primera etapa, el repositorio presenta la metodología utilizada para la extracción y análisis de Indicadores de Ataque (IoA) a partir de reportes de inteligencia y ciberseguridad publicados por diferentes proveedores. Se incluyen los prompts empleados para la extracción de amenazas, vectores de ataque y su mapeo con técnicas de MITRE ATT&CK, así como el proceso de verificación aplicado a los resultados. Esta validación combina una revisión manual de las tablas generadas con un segundo proceso basado en RAG (Retrieval-Augmented Generation), orientado a identificar posibles inconsistencias, inferencias no justificadas o alucinaciones producidas durante el análisis asistido por inteligencia artificial.
+
+A partir de los resultados verificados se realiza un análisis de frecuencia de las técnicas MITRE ATT&CK identificadas en los diferentes reportes, permitiendo establecer cuáles presentan una mayor recurrencia dentro del conjunto de fuentes estudiadas. Sobre estas técnicas se identifican posibles IoA, eventos observables y campos de telemetría que deberían estar disponibles en los registros para facilitar su identificación y posterior análisis forense.
+
+La segunda etapa del repositorio documenta el proceso de generación del log propuesto. Para ello se parte de un evento base definido mediante el esquema OCSF (Open Cybersecurity Schema Framework), el cual es enriquecido mediante dos perfiles desarrollados como parte de la investigación. El primero incorpora información relacionada con la técnica MITRE ATT&CK asociada al comportamiento observado, mientras que el segundo contextualiza el evento dentro de una fase de la Cyber Kill Chain. La combinación del evento base y estos perfiles de enriquecimiento busca generar un registro estructurado que conserve la interoperabilidad proporcionada por OCSF, al tiempo que incorpore el contexto necesario para su utilización dentro de la metodología Forensis y para posteriores procesos de análisis forense y detección temprana de ciberataques.
+
+De esta manera, el repositorio permite reproducir y consultar el flujo metodológico completo utilizado en la investigación: 
+
+fuentes de inteligencia → extracción de amenazas y vectores → mapeo MITRE ATT&CK → verificación manual y mediante RAG → identificación de técnicas recurrentes → definición de IoA, eventos observables y campos requeridos → construcción del evento OCSF → enriquecimiento mediante perfiles → generación del log final.
+
+# Proceso de extracción y análisis de IoAs
 
 ## Contexto
 
