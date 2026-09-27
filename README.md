@@ -774,4 +774,748 @@ Basado en este análisis se genera el producto final de este proceso que es la g
 | T1204.003 - Malicious Image | Descarga y despliegue por el usuario de una imagen de contenedor o VM no confiable, seguida de inicio de instancia/contenedor y ejecución de utilidades o conexiones no esperadas en el arranque. (MITRE ATT&CK) | descarga o pull de imagen desde registro público o no aprobado; creación de contenedor o instancia desde imagen nueva o no vista; inicio de contenedor o VM; ejecución de curl, wget, bash, python, cloud-init u otra utilidad al primer arranque; conexión saliente anómala desde el namespace, contenedor o instancia recién creada | timestamp; user_id; service_account; image_name; image_tag; image_digest; image_registry; image_source; container_id; container_name; instance_id; cloud_account_id; project_or_subscription; namespace; process_name; command_line; destination_ip; destination_domain; action; result (MITRE ATT&CK) |
 
 
-# Proceso de generacion de Log
+# Metodología de enriquecimiento de eventos OCSF para análisis forense
+
+## 1. Objetivo
+
+Este documento describe el proceso utilizado para construir un log de seguridad enriquecido a partir de un evento base del **Open Cybersecurity Schema Framework (OCSF)**. La metodología parte de un evento estructurado común y agrega contexto progresivamente mediante:
+
+1. un evento base OCSF;
+2. contexto del host donde se observa la actividad;
+3. un perfil de enriquecimiento asociado a una técnica de **MITRE ATT&CK**;
+4. un perfil de contextualización basado en **Cyber Kill Chain**;
+5. criterios de minimización y anonimización de datos.
+
+El propósito de este procedimiento es conservar la interoperabilidad de un esquema base y, al mismo tiempo, aumentar el valor analítico del log para actividades de detección, correlación e investigación forense.
+
+> **Importante:** `mitre_technique_profile` y `cyber_kill_chain_profile` son perfiles propuestos en esta investigación. No forman parte del esquema oficial de OCSF. OCSF se utiliza como estructura base y mecanismo de referencia para el enriquecimiento.
+
+---
+
+## 2. Principio de diseño
+
+La lógica general de la metodología es:
+
+```text
+Evento base OCSF
+        │
+        ▼
+Contexto del host
+        │
+        ▼
+Perfil MITRE ATT&CK
+        │
+        ▼
+Perfil Cyber Kill Chain
+        │
+        ▼
+Log enriquecido para análisis forense
+```
+
+El enriquecimiento se realiza por capas. Cada capa debe aportar información nueva sin duplicar innecesariamente los datos de las capas anteriores.
+
+La separación permite distinguir:
+
+- **qué ocurrió**;
+- **dónde ocurrió**;
+- **qué comportamiento de ataque representa**;
+- **qué evidencia observable sustenta esa clasificación**;
+- **hasta qué punto progresó la actividad adversaria**.
+
+---
+
+# 3. Caso de ejemplo
+
+Para demostrar el proceso se utiliza un escenario de **Password Spraying**, correspondiente a la sub-técnica:
+
+- **MITRE ATT&CK:** T1110.003
+- **Nombre:** Password Spraying
+- **Técnica padre:** T1110 - Brute Force
+- **Táctica:** TA0006 - Credential Access
+
+MITRE ATT&CK describe Password Spraying como el uso de una contraseña o de un conjunto reducido de contraseñas contra múltiples cuentas con el objetivo de obtener credenciales válidas.
+
+En el ejemplo se observan múltiples fallos de autenticación contra usuarios diferentes desde un mismo origen dentro de una ventana temporal.
+
+---
+
+# 4. Paso 1 - Generación del evento base OCSF
+
+El primer paso consiste en generar un evento sin información específica de MITRE ATT&CK ni Cyber Kill Chain.
+
+OCSF define `Base Event` como un evento genérico que proporciona atributos comunes que pueden ser utilizados por diferentes clases de eventos.
+
+Ejemplo simplificado:
+
+```json
+{
+  "activity_id": 99,
+  "activity_name": "Application Activity",
+
+  "category_uid": 0,
+  "category_name": "Uncategorized",
+
+  "class_uid": 0,
+  "class_name": "Base Event",
+
+  "type_uid": 99,
+
+  "time": 1789948800000,
+  "timezone_offset": -300,
+
+  "severity_id": 1,
+  "severity": "Informational",
+
+  "status_id": 2,
+  "status": "Failure",
+
+  "message": "Multiple authentication failures were detected against different user accounts from the same source.",
+
+  "metadata": {
+    "version": "1.9.0",
+    "product": {
+      "name": "Example Application",
+      "vendor_name": "Research Prototype",
+      "version": "1.0.0"
+    }
+  }
+}
+```
+
+## Lógica
+
+En esta primera etapa se registran únicamente los datos fundamentales del evento:
+
+- clasificación;
+- tiempo;
+- severidad;
+- resultado;
+- mensaje;
+- producto que genera el registro.
+
+No se debe incorporar todavía información de MITRE ATT&CK o Cyber Kill Chain. Esto permite establecer una línea base y posteriormente identificar qué información aporta cada enriquecimiento.
+
+---
+
+# 5. Paso 2 - Identificación y contextualización del origen
+
+El siguiente paso consiste en identificar el host o dispositivo donde la actividad fue observada.
+
+OCSF incluye oficialmente el perfil `host`, que permite añadir contexto mediante objetos como `device` y `actor`.
+
+Para este ejemplo se utiliza únicamente `device`.
+
+```json
+"device": {
+  "hostname": "COMPANYServer1",
+  "uid": "SRV-001",
+  "ip": "192.168.1.10",
+  "os_machine_uuid": "550e8400-e29b-41d4-a716-446655440000",
+  "type_id": 1
+}
+```
+
+## Lógica
+
+Los campos seleccionados permiten distinguir diferentes mecanismos de identificación del activo:
+
+| Campo | Función |
+|---|---|
+| `hostname` | Nombre lógico del host |
+| `uid` | Identificador único del activo |
+| `ip` | Dirección IP asociada al dispositivo |
+| `os_machine_uuid` | Identificador persistente del sistema |
+| `type_id` | Tipo de dispositivo según el esquema |
+
+La separación entre estos campos es relevante para análisis forense porque la dirección IP y el hostname pueden cambiar durante el tiempo, mientras que otros identificadores pueden proporcionar mayor persistencia.
+
+También debe distinguirse entre:
+
+```text
+device.ip
+```
+
+y:
+
+```text
+mitre_technique_profile.observables.source_ip
+```
+
+`device.ip` identifica el dispositivo donde se observa el evento, mientras que `source_ip` representa el origen de la actividad observada.
+
+---
+
+# 6. Paso 3 - Perfil de enriquecimiento MITRE ATT&CK
+
+Una vez identificado el evento y el activo, se agrega un perfil específico para la técnica de ataque identificada.
+
+Para este caso:
+
+```text
+T1110.003 - Password Spraying
+```
+
+El perfil propuesto es:
+
+```json
+"mitre_technique_profile": {
+  "technique_id": "T1110.003",
+  "technique_name": "Password Spraying",
+
+  "parent_technique_id": "T1110",
+  "parent_technique_name": "Brute Force",
+
+  "tactic_id": "TA0006",
+  "tactic_name": "Credential Access",
+
+  "description": "Uso de una misma contraseña o de un conjunto reducido de contraseñas contra múltiples cuentas para intentar obtener credenciales válidas.",
+
+  "ioa": {
+    "multiple_target_accounts": true,
+    "reused_password_pattern": true,
+    "repeated_authentication_failures": true,
+    "same_source_multiple_accounts": true,
+    "time_correlated_attempts": true
+  },
+
+  "observables": {
+    "source_ip": "8.8.8.8",
+    "destination_ip": "192.168.1.10",
+
+    "usernames": [
+      "JDoe001",
+      "JDoe002"
+    ],
+
+    "authentication_result": [
+      "Fail",
+      "Fail"
+    ],
+
+    "failure_reason": [
+      "Wrong Password",
+      "Wrong Password"
+    ],
+
+    "service_name": "OpenSSH",
+    "protocol": "SSH",
+
+    "client_app": "Putty.exe",
+
+    "event_id": "AUTH-PSPRAY-0001",
+    "time_window_id": "TW-20260312-1015-5M"
+  },
+
+  "ioc": {
+    "confirmed": false,
+    "indicators": []
+  },
+
+  "profile_summary": "Múltiples cuentas presentan fallos de autenticación desde un origen común dentro de una ventana temporal, con características compatibles con un intento de Password Spraying."
+}
+```
+
+---
+
+## 6.1. Identificación de la técnica
+
+Los siguientes campos permiten relacionar directamente el evento con MITRE ATT&CK:
+
+```json
+"technique_id": "T1110.003",
+"technique_name": "Password Spraying",
+"parent_technique_id": "T1110",
+"parent_technique_name": "Brute Force",
+"tactic_id": "TA0006",
+"tactic_name": "Credential Access"
+```
+
+Estos atributos proporcionan una clasificación estandarizada del comportamiento observado.
+
+---
+
+## 6.2. Indicadores de ataque - IoA
+
+Los IoA representan características de comportamiento observadas durante el evento:
+
+```json
+"ioa": {
+  "multiple_target_accounts": true,
+  "reused_password_pattern": true,
+  "repeated_authentication_failures": true,
+  "same_source_multiple_accounts": true,
+  "time_correlated_attempts": true
+}
+```
+
+En este caso, los indicadores describen:
+
+- múltiples cuentas objetivo;
+- repetición de un patrón de autenticación;
+- múltiples fallos;
+- un mismo origen contra diferentes cuentas;
+- correlación temporal de los intentos.
+
+Estos atributos permiten convertir varios eventos aislados en un comportamiento susceptible de correlación.
+
+### Minimización del dato de contraseña
+
+Aunque el análisis puede determinar que existe reutilización de una misma contraseña o patrón, **el valor concreto de la contraseña no se almacena en el log enriquecido**.
+
+Por esta razón se conserva únicamente un indicador derivado:
+
+```json
+"reused_password_pattern": true
+```
+
+pero se elimina cualquier campo similar a:
+
+```text
+attempted_password_pattern
+```
+
+Esta decisión reduce la exposición innecesaria de información sensible sin perder completamente el valor analítico del evento.
+
+---
+
+## 6.3. Observables
+
+Los observables corresponden a datos directamente relacionados con el evento:
+
+```json
+"observables": {
+  "source_ip": "8.8.8.8",
+  "destination_ip": "192.168.1.10",
+  "usernames": [
+    "JDoe001",
+    "JDoe002"
+  ]
+}
+```
+
+Los observables no deben considerarse automáticamente indicadores de compromiso.
+
+Por ejemplo:
+
+```text
+8.8.8.8
+```
+
+es una dirección IP observada durante el evento, pero esto no implica por sí mismo que esa dirección sea infraestructura maliciosa.
+
+---
+
+## 6.4. Diferencia entre observable e IoC
+
+La metodología adopta una separación conservadora:
+
+```text
+Observable ≠ IoC confirmado
+```
+
+Para que un observable sea clasificado como IoC debe existir evidencia adicional que permita asociarlo a actividad maliciosa conocida.
+
+Por ello, en el ejemplo:
+
+```json
+"ioc": {
+  "confirmed": false,
+  "indicators": []
+}
+```
+
+El hecho de que una IP participe en un comportamiento sospechoso no es suficiente para convertirla automáticamente en IoC.
+
+---
+
+## 6.5. Resumen contextual
+
+Se agrega un campo de descripción breve:
+
+```json
+"profile_summary": "Múltiples cuentas presentan fallos de autenticación desde un origen común dentro de una ventana temporal, con características compatibles con un intento de Password Spraying."
+```
+
+La función de este campo es diferente de `description`.
+
+### `description`
+
+Describe la técnica de forma general.
+
+### `profile_summary`
+
+Explica por qué el evento concreto presenta características compatibles con dicha técnica.
+
+La relación buscada es:
+
+```text
+Técnica
+   │
+   ▼
+Observables
+   │
+   ▼
+IoA
+   │
+   ▼
+Explicación contextual
+```
+
+---
+
+# 7. Paso 4 - Perfil Cyber Kill Chain
+
+Después de identificar el comportamiento mediante MITRE ATT&CK se incorpora un segundo perfil cuya función es aportar contexto sobre la progresión del ataque.
+
+Para mantener el perfil simple se utilizan únicamente:
+
+- fase;
+- estado de la fase;
+- descripción.
+
+```json
+"cyber_kill_chain_profile": {
+  "phase": "Exploitation",
+  "phase_status": "Unsuccessful",
+  "description": "El atacante intenta obtener acceso mediante autenticación contra múltiples cuentas, pero los intentos fallan y no se observa progresión hacia fases posteriores."
+}
+```
+
+---
+
+## 7.1. Justificación de la fase
+
+En este ejemplo no se clasifica la actividad como `Reconnaissance`.
+
+La razón es que el atacante ya está interactuando directamente con el sistema mediante intentos de autenticación.
+
+Reconnaissance se relaciona principalmente con actividades de investigación, identificación y selección del objetivo.
+
+En el escenario analizado ya existe una acción ofensiva contra el sistema.
+
+Por esta razón se utiliza:
+
+```text
+Exploitation
+```
+
+con:
+
+```text
+Unsuccessful
+```
+
+para señalar que el intento no obtuvo acceso válido y no existe evidencia de progresión a fases posteriores.
+
+> **Consideración metodológica:** Password Spraying no encaja de forma perfecta con el Cyber Kill Chain original, cuyo modelo fue diseñado principalmente para describir intrusiones basadas en entrega y explotación de payloads. Por tanto, la asociación con `Exploitation` constituye una decisión de modelado de esta investigación y debe interpretarse como contextualización de la progresión, no como una equivalencia oficial entre MITRE ATT&CK y Cyber Kill Chain.
+
+---
+
+# 8. Relación entre los dos perfiles
+
+Los perfiles cumplen funciones distintas.
+
+## Perfil MITRE ATT&CK
+
+Responde principalmente:
+
+```text
+¿Qué comportamiento estamos observando?
+```
+
+Ejemplo:
+
+```text
+T1110.003 - Password Spraying
+```
+
+Además registra los observables y características analíticas que sustentan la clasificación.
+
+## Perfil Cyber Kill Chain
+
+Responde principalmente:
+
+```text
+¿Hasta dónde progresó la actividad observada?
+```
+
+En el ejemplo:
+
+```text
+Exploitation
+└── Unsuccessful
+```
+
+La combinación permite representar:
+
+```text
+MITRE ATT&CK
+T1110.003 - Password Spraying
+        │
+        ├── observables
+        ├── IoA
+        └── contexto
+                │
+                ▼
+Cyber Kill Chain
+Exploitation
+        │
+        └── Unsuccessful
+```
+
+---
+
+# 9. Paso 5 - Anonimización y minimización
+
+Antes de utilizar el ejemplo en documentación pública o en el repositorio, se aplican mecanismos básicos de anonimización.
+
+Los nombres originales:
+
+```text
+John.Doe
+Jane.Doe
+```
+
+son reemplazados por identificadores ficticios similares a los utilizados en un directorio empresarial:
+
+```text
+JDoe001
+JDoe002
+```
+
+Estos valores mantienen el formato necesario para comprender el ejemplo sin exponer identidades reales.
+
+También se elimina cualquier valor concreto de contraseña.
+
+La lógica es:
+
+```text
+Conservar información necesaria para detectar el comportamiento
+                         +
+Eliminar información sensible que no sea necesaria para demostrarlo
+```
+
+---
+
+# 10. Log final
+
+El resultado final del proceso es:
+
+```json
+{
+  "activity_id": 99,
+  "activity_name": "Application Activity",
+
+  "category_uid": 0,
+  "category_name": "Uncategorized",
+
+  "class_uid": 0,
+  "class_name": "Base Event",
+
+  "type_uid": 99,
+
+  "time": 1789948800000,
+  "timezone_offset": -300,
+
+  "severity_id": 1,
+  "severity": "Informational",
+
+  "status_id": 2,
+  "status": "Failure",
+
+  "message": "Multiple authentication failures were detected against different user accounts from the same source.",
+
+  "device": {
+    "hostname": "COMPANYServer1",
+    "uid": "SRV-001",
+    "ip": "192.168.1.10",
+    "os_machine_uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "type_id": 1
+  },
+
+  "metadata": {
+    "version": "1.9.0",
+    "product": {
+      "name": "Example Application",
+      "vendor_name": "Research Prototype",
+      "version": "1.0.0"
+    }
+  },
+
+  "mitre_technique_profile": {
+    "technique_id": "T1110.003",
+    "technique_name": "Password Spraying",
+
+    "parent_technique_id": "T1110",
+    "parent_technique_name": "Brute Force",
+
+    "tactic_id": "TA0006",
+    "tactic_name": "Credential Access",
+
+    "description": "Uso de una misma contraseña o de un conjunto reducido de contraseñas contra múltiples cuentas para intentar obtener credenciales válidas.",
+
+    "ioa": {
+      "multiple_target_accounts": true,
+      "reused_password_pattern": true,
+      "repeated_authentication_failures": true,
+      "same_source_multiple_accounts": true,
+      "time_correlated_attempts": true
+    },
+
+    "observables": {
+      "source_ip": "8.8.8.8",
+      "destination_ip": "192.168.1.10",
+
+      "usernames": [
+        "JDoe001",
+        "JDoe002"
+      ],
+
+      "authentication_result": [
+        "Fail",
+        "Fail"
+      ],
+
+      "failure_reason": [
+        "Wrong Password",
+        "Wrong Password"
+      ],
+
+      "service_name": "OpenSSH",
+      "protocol": "SSH",
+
+      "client_app": "Putty.exe",
+
+      "event_id": "AUTH-PSPRAY-0001",
+      "time_window_id": "TW-20260312-1015-5M"
+    },
+
+    "ioc": {
+      "confirmed": false,
+      "indicators": []
+    },
+
+    "profile_summary": "Múltiples cuentas presentan fallos de autenticación desde un origen común dentro de una ventana temporal, con características compatibles con un intento de Password Spraying."
+  },
+
+  "cyber_kill_chain_profile": {
+    "phase": "Exploitation",
+    "phase_status": "Unsuccessful",
+    "description": "El atacante intenta obtener acceso mediante autenticación contra múltiples cuentas, pero los intentos fallan y no se observa progresión hacia fases posteriores."
+  }
+}
+```
+
+---
+
+# 11. Estructura lógica final
+
+```text
+Log enriquecido
+│
+├── OCSF Base Event
+│   ├── clasificación
+│   ├── timestamp
+│   ├── severidad
+│   ├── resultado
+│   ├── mensaje
+│   └── metadata
+│
+├── Contexto del host
+│   └── device
+│       ├── hostname
+│       ├── uid
+│       ├── ip
+│       └── os_machine_uuid
+│
+├── Perfil MITRE ATT&CK
+│   └── T1110.003 - Password Spraying
+│       ├── técnica y táctica
+│       ├── descripción
+│       ├── IoA
+│       ├── observables
+│       ├── IoC
+│       └── profile_summary
+│
+└── Perfil Cyber Kill Chain
+    └── Exploitation
+        ├── Unsuccessful
+        └── descripción de progresión
+```
+
+---
+
+# 12. Reglas generales derivadas del ejemplo
+
+A partir de este ejercicio se establecen las siguientes reglas para la generación de logs enriquecidos:
+
+1. **El evento OCSF debe mantenerse como estructura base.**
+2. **Los perfiles de enriquecimiento deben aportar contexto adicional y no reemplazar los campos originales.**
+3. **Los observables no deben clasificarse automáticamente como IoC.**
+4. **Los IoA deben representar comportamientos derivados de eventos observables y correlacionables.**
+5. **La técnica MITRE debe seleccionarse solamente cuando exista evidencia suficiente en los eventos registrados.**
+6. **El perfil MITRE debe explicar por qué los eventos observados son compatibles con la técnica seleccionada.**
+7. **El perfil Cyber Kill Chain debe representar la progresión de la actividad y no duplicar la información de MITRE ATT&CK.**
+
+---
+
+# 13. Valor para análisis forense
+
+La estructura resultante permite que un analista no dependa exclusivamente de un mensaje de texto libre.
+
+Un evento tradicional podría limitarse a:
+
+```text
+Multiple authentication failures detected.
+```
+
+El evento enriquecido permite conocer simultáneamente:
+
+```text
+¿Qué ocurrió?
+    → múltiples fallos de autenticación
+
+¿Dónde?
+    → COMPANYServer1 / 192.168.1.10
+
+¿Desde dónde?
+    → 8.8.8.8
+
+¿Contra quién?
+    → JDoe001 y JDoe002
+
+¿Qué comportamiento representa?
+    → T1110.003 Password Spraying
+
+¿Qué señales lo sustentan?
+    → múltiples cuentas + mismo origen + fallos + correlación temporal
+
+¿Existe un IoC confirmado?
+    → No
+
+¿En qué punto se encuentra la actividad?
+    → Exploitation
+
+¿Tuvo éxito?
+    → No
+```
+
+La finalidad del enriquecimiento no es aumentar indiscriminadamente la cantidad de campos, sino **incrementar el contexto, trazabilidad y capacidad de correlación del evento**.
+
+---
+
+## Nota sobre el alcance
+
+Este documento presenta un ejemplo de aplicación de la metodología sobre **T1110.003 - Password Spraying**.
+
+Los campos incluidos en los perfiles de investigación no deben asumirse como universales para todas las técnicas MITRE ATT&CK. Para cada técnica se deben identificar previamente:
+
+- eventos relevantes;
+- observables;
+- IoA;
+- posibles IoC;
+- campos requeridos para su detección;
+- relación temporal entre eventos;
+- posible fase de Cyber Kill Chain.
+
+El objetivo de la metodología es mantener un **núcleo OCSF común** y permitir que los perfiles de enriquecimiento se adapten al comportamiento de ataque que se intenta registrar y analizar.
